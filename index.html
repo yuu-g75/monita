@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>心電図判読トレーニング</title>
+<style>
+    :root {
+        --bg-color: #121212;
+        --panel-bg: #1e1e1e;
+        --monitor-bg: #001100;
+        --primary-color: #4CAF50;
+        --danger-color: #f44336;
+        --text-color: #ffffff;
+        --border-color: #333333;
+    }
+
+    body {
+        font-family: 'Helvetica Neue', Arial, sans-serif;
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        margin: 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+    }
+
+    #app {
+        width: 100%;
+        max-width: 600px;
+        background: var(--panel-bg);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+        border-radius: 12px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        min-height: 85vh;
+        position: relative;
+    }
+
+    .screen {
+        display: none;
+        padding: 25px;
+        flex-grow: 1;
+        flex-direction: column;
+        justify-content: center;
+    }
+
+    .screen.active {
+        display: flex;
+    }
+
+    h1, h2, h3 {
+        color: var(--primary-color);
+        text-align: center;
+        margin-top: 0;
+    }
+
+    /* Monitor Styling */
+    #monitor-wrapper {
+        width: 100%;
+        height: 220px;
+        background: var(--monitor-bg);
+        border: 3px solid var(--border-color);
+        position: relative;
+        border-radius: 8px;
+        margin-bottom: 25px;
+        overflow: hidden;
+    }
+
+    #monitor-wrapper::after {
+        content: "";
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background-image: 
+            linear-gradient(rgba(0,255,0,0.15) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0,255,0,0.15) 1px, transparent 1px);
+        background-size: 25px 25px;
+        z-index: 1;
+        pointer-events: none;
+    }
+
+    canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 2;
+    }
+
+    /* Buttons */
+    .btn-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+
+    .btn-grid.single {
+        grid-template-columns: 1fr;
+    }
+
+    button {
+        background: #2c2c2c;
+        color: #fff;
+        border: 2px solid var(--border-color);
+        padding: 16px;
+        font-size: 15px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    button:hover {
+        background: #3a3a3a;
+    }
+
+    button.selected {
+        background: rgba(76, 175, 80, 0.2);
+        border-color: var(--primary-color);
+        color: var(--primary-color);
+        font-weight: bold;
+    }
+
+    button.primary {
+        background: var(--primary-color);
+        color: #121212;
+        border: none;
+        font-size: 18px;
+        font-weight: bold;
+        padding: 18px;
+        margin-top: auto;
+    }
+
+    button.primary:hover {
+        background: #45a049;
+    }
+
+    button:disabled {
+        background: #333;
+        color: #666;
+        cursor: not-allowed;
+    }
+
+    /* Info Box Styling */
+    .info-box {
+        background: #252525;
+        border-left: 5px solid var(--primary-color);
+        padding: 16px;
+        margin-bottom: 16px;
+        border-radius: 0 6px 6px 0;
+    }
+
+    .info-box.danger {
+        border-left-color: var(--danger-color);
+    }
+
+    .info-label {
+        font-size: 12px;
+        color: #aaa;
+        margin-bottom: 6px;
+        font-weight: bold;
+        letter-spacing: 1px;
+    }
+
+    .info-text {
+        font-size: 16px;
+        line-height: 1.6;
+        margin: 0;
+    }
+
+    .result-title {
+        font-size: 36px;
+        text-align: center;
+        margin: 20px 0 40px 0;
+        font-weight: bold;
+    }
+    
+    .correct { color: var(--primary-color); }
+    .incorrect { color: var(--danger-color); }
+
+</style>
+</head>
+<body>
+
+<div id="app">
+    <div id="start-screen" class="screen active">
+        <h1>心電図トレーニング</h1>
+        <p style="text-align:center; color:#ccc; margin-bottom: 40px; line-height:1.6;">
+            動く波形を見て、正しい心電図の種類を選択してください。<br>
+            ※「すぐ引けるモニター心電図」に基づく出題です。
+        </p>
+        <button class="primary" onclick="startTraining()">訓練を開始する</button>
+    </div>
+
+    <div id="quiz-screen" class="screen">
+        <div id="monitor-wrapper">
+            <canvas id="ecg-canvas"></canvas>
+        </div>
+        <div class="btn-grid" id="choices-container">
+            </div>
+        <button id="btn-next-result" class="primary" onclick="goToResult()" disabled>次へ進む</button>
+    </div>
+
+    <div id="result-screen" class="screen">
+        <div id="result-text" class="result-title"></div>
+        <button class="primary" onclick="goToExplanation()">次へ（解説を見る）</button>
+    </div>
+
+    <div id="explanation-screen" class="screen">
+        <h2 id="exp-title" style="margin-bottom: 20px;"></h2>
+        
+        <div class="info-box danger">
+            <div class="info-label">🚨 緊急度・必要な処置</div>
+            <p class="info-text" id="exp-action"></p>
+        </div>
+
+        <div class="info-box">
+            <div class="info-label">📖 波形の詳細・特徴</div>
+            <p class="info-text" id="exp-desc"></p>
+        </div>
+
+        <button class="primary" onclick="nextQuestion()" style="margin-top: 30px;">次の問題へ</button>
+    </div>
+</div>
+
+<script>
+// PDFデータを基にした心電図データベース
+const ecgData = [
+    {
+        id: 'nsr',
+        name: '正常洞調律',
+        urgency: 'なし',
+        action: '特になし',
+        description: '洞結節で発生した規則正しい興奮が、スムーズに心房から心室に伝わる状態です。P波、QRS波、T波が一定のリズムで規則正しくあらわれます。'
+    },
+    {
+        id: 'vf',
+        name: '心室細動 (VF)',
+        urgency: '高',
+        action: 'ドクターコール・心臓マッサージ・早急な除細動',
+        description: '心室筋がまったく無秩序に興奮した状態で、心拍出量はゼロとなる極めて危険な不整脈です。QRS波もT波も確認できず、波形の大きさや形が一定しません。数秒で意識を失うため大至急の対応が必要です。'
+    },
+    {
+        id: 'vt',
+        name: '心室頻拍 (VT)',
+        urgency: '高',
+        action: 'ドクターコール・心臓マッサージ・意識確認',
+        description: '心室性期外収縮が3回以上持続する不整脈です。RR間隔は狭く一定であることが多く、幅広いQRS波(0.12秒以上)が連続します。血圧が低下し、ショック状態や突然死にいたる危険があります。'
+    },
+    {
+        id: 'af',
+        name: '心房細動 (AF)',
+        urgency: '中',
+        action: '12誘導心電図・症状の有無をチェック',
+        description: '心房の異常な興奮により、心室への伝導が不規則になります。P波が消失し、f波(細動波)があらわれ、RR間隔が全く一定しない(絶対不整脈)のが特徴です。心房内に血栓ができやすく、心原性脳梗塞の原因となります。'
+    },
+    {
+        id: 'pvc',
+        name: '心室性期外収縮 (PVC)',
+        urgency: '低〜中',
+        action: 'バイタルチェック・症状の確認',
+        description: '正常より早いタイミングで心室が収縮します。先行するP波を伴わない幅広いQRS波があらわれ、T波は逆向きになります。基礎疾患がなければ経過観察となることが多いですが、連発（ショートラン）やR on Tには注意が必要です。'
+    }
+];
+
+let currentQuestion = null;
+let selectedAnswer = null;
+
+// Canvas Animation Variables
+const canvas = document.getElementById('ecg-canvas');
+const ctx = canvas.getContext('2d');
+let animationId;
+let ecgTime = 0;
+let ecgX = 0;
+let lastY = 0;
+let ecgState = {};
+
+// Resize canvas properly
+function resizeCanvas() {
+    const wrapper = document.getElementById('monitor-wrapper');
+    canvas.width = wrapper.clientWidth;
+    canvas.height = wrapper.clientHeight;
+    lastY = canvas.height / 2;
+}
+window.addEventListener('resize', resizeCanvas);
+
+// Initialize ECG State for mathematical drawing
+function initECG(type) {
+    ecgTime = 0;
+    ecgX = 0;
+    lastY = canvas.height / 2;
+    ecgState = {
+        type: type,
+        nextBeat: 0.5,
+        beatCount: 0
+    };
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+// Wave Generator Math
+function getWaveValue(dt) {
+    ecgTime += dt;
+    let y = 0;
+    
+    // VF: Chaotic random waves
+    if (ecgState.type === 'vf') {
+        return (Math.sin(ecgTime * 15) * 0.4 + Math.sin(ecgTime * 27) * 0.3 + Math.sin(ecgTime * 7) * 0.3) * (0.6 + 0.4 * Math.sin(ecgTime * 2));
+    }
+    
+    // VT: Regular wide sinusoidal waves
+    if (ecgState.type === 'vt') {
+        return Math.sin(ecgTime * 15) * 0.7 + Math.sin(ecgTime * 5) * 0.3;
+    }
+
+    let timeSinceBeat = ecgTime - ecgState.nextBeat;
+    
+    // AF: Baseline f-waves
+    if (ecgState.type === 'af') {
+        y += Math.sin(ecgTime * 25) * 0.05 + Math.sin(ecgTime * 12) * 0.05;
+    }
+    
+    if (timeSinceBeat >= 0 && timeSinceBeat < 0.6) {
+        let phase = timeSinceBeat;
+        let isPVC = (ecgState.type === 'pvc' && ecgState.beatCount % 4 === 3);
+        
+        if (isPVC) {
+            // PVC: Wide bizarre QRS and inverted T
+            if (phase < 0.15) y += Math.sin(phase * Math.PI / 0.15) * 0.8;
+            else if (phase < 0.4) y -= Math.sin((phase - 0.15) * Math.PI / 0.25) * 0.4;
+        } else {
+            // Normal beat shape
+            if (ecgState.type !== 'af' && phase < 0.1) {
+                y += Math.sin(phase * Math.PI / 0.1) * 0.1; // P wave
+            }
+            // QRS
+            if (phase > 0.15 && phase < 0.17) y -= 0.1;
+            if (phase >= 0.17 && phase < 0.2) y += 0.9;
+            if (phase >= 0.2 && phase < 0.23) y -= 0.3;
+            // T wave
+            if (phase > 0.35 && phase < 0.5) {
+                y += Math.sin((phase - 0.35) * Math.PI / 0.15) * 0.15;
+            }
+        }
+    }
+    
+    // Beat timing logic
+    if (timeSinceBeat > 0.6) {
+        ecgState.beatCount++;
+        if (ecgState.type === 'af') {
+            ecgState.nextBeat = ecgTime + 0.3 + Math.random() * 0.5; // Absolute arrhythmia
+        } else if (ecgState.type === 'pvc' && ecgState.beatCount % 4 === 3) {
+            ecgState.nextBeat = ecgTime + 0.4; // Early beat
+        } else if (ecgState.type === 'pvc' && ecgState.beatCount % 4 === 0) {
+            ecgState.nextBeat = ecgTime + 1.2; // Compensatory pause
+        } else {
+            ecgState.nextBeat = ecgTime + 0.8; // NSR interval
+        }
+    }
+    return -y; // Invert for canvas coordinate system
+}
+
+function drawLoop() {
+    const speed = 2.5; 
+    ctx.clearRect(ecgX, 0, speed * 8, canvas.height); // Sweep clear effect
+    
+    ctx.beginPath();
+    ctx.moveTo(ecgX, lastY);
+    
+    let dt = 1/60;
+    let val = getWaveValue(dt);
+    let nextY = canvas.height / 2 + val * (canvas.height * 0.4); 
+    
+    ecgX += speed;
+    ctx.lineTo(ecgX, nextY);
+    ctx.strokeStyle = '#00FF00';
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    
+    lastY = nextY;
+    
+    if (ecgX >= canvas.width) {
+        ecgX = 0;
+    }
+    
+    animationId = requestAnimationFrame(drawLoop);
+}
+
+// App Flow Functions
+function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+}
+
+function startTraining() {
+    resizeCanvas();
+    nextQuestion();
+}
+
+function nextQuestion() {
+    selectedAnswer = null;
+    document.getElementById('btn-next-result').disabled = true;
+    
+    // Pick random ECG
+    currentQuestion = ecgData[Math.floor(Math.random() * ecgData.length)];
+    
+    // Setup Canvas
+    initECG(currentQuestion.id);
+    if (animationId) cancelAnimationFrame(animationId);
+    drawLoop();
+
+    // Render Buttons
+    const container = document.getElementById('choices-container');
+    container.innerHTML = '';
+    
+    // Shuffle choices visually but keep the 5 options
+    let shuffled = [...ecgData].sort(() => Math.random() - 0.5);
+    shuffled.forEach(item => {
+        const btn = document.createElement('button');
+        btn.textContent = item.name;
+        btn.onclick = () => selectChoice(item.id, btn);
+        container.appendChild(btn);
+    });
+
+    showScreen('quiz-screen');
+}
+
+function selectChoice(id, btnElement) {
+    selectedAnswer = id;
+    document.querySelectorAll('#choices-container button').forEach(b => b.classList.remove('selected'));
+    btnElement.classList.add('selected');
+    document.getElementById('btn-next-result').disabled = false;
+}
+
+function goToResult() {
+    cancelAnimationFrame(animationId); // Stop drawing
+    
+    const isCorrect = (selectedAnswer === currentQuestion.id);
+    const resultEl = document.getElementById('result-text');
+    
+    if (isCorrect) {
+        resultEl.textContent = "✅ 正解！";
+        resultEl.className = "result-title correct";
+    } else {
+        resultEl.textContent = "❌ 不正解...";
+        resultEl.className = "result-title incorrect";
+    }
+    
+    showScreen('result-screen');
+}
+
+function goToExplanation() {
+    document.getElementById('exp-title').textContent = currentQuestion.name;
+    document.getElementById('exp-action').innerHTML = `<strong>【緊急度】 ${currentQuestion.urgency}</strong><br>${currentQuestion.action}`;
+    document.getElementById('exp-desc').textContent = currentQuestion.description;
+    
+    showScreen('explanation-screen');
+}
+</script>
+</body>
+</html>
