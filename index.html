@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>心電図判読トレーニング</title>
+<title>心電図判読トレーニング（高精度モニター版）</title>
 <style>
     :root {
         --bg-color: #121212;
@@ -31,17 +31,16 @@
         width: 100%;
         max-width: 600px;
         background: var(--panel-bg);
-        box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.8);
         border-radius: 12px;
         overflow: hidden;
         display: flex;
         flex-direction: column;
         min-height: 85vh;
-        position: relative;
     }
 
     .screen {
-        display: none; /* 初期状態は非表示 */
+        display: none;
         padding: 25px;
         flex-grow: 1;
         flex-direction: column;
@@ -49,7 +48,7 @@
     }
 
     .screen.active {
-        display: flex; /* activeクラスがつくと表示される */
+        display: flex;
     }
 
     h1, h2, h3 {
@@ -58,35 +57,35 @@
         margin-top: 0;
     }
 
-    /* モニター画面のデザイン */
+    /* =========================================
+       高精度モニター背景（マス目のルールを適応）
+       大きなマス(25px) と 小さなマス(5px) を描画
+    ========================================= */
     #monitor-wrapper {
         width: 100%;
-        height: 220px;
-        background: var(--monitor-bg);
-        border: 3px solid var(--border-color);
-        position: relative;
+        height: 250px;
+        background-color: var(--monitor-bg);
+        background-image: 
+            linear-gradient(rgba(0, 255, 0, 0.3) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0, 255, 0, 0.3) 1px, transparent 1px),
+            linear-gradient(rgba(0, 255, 0, 0.08) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(0, 255, 0, 0.08) 1px, transparent 1px);
+        background-size: 25px 25px, 25px 25px, 5px 5px, 5px 5px;
+        background-position: center center;
+        border: 3px solid #222;
         border-radius: 8px;
         margin-bottom: 25px;
+        position: relative;
         overflow: hidden;
     }
 
-    /* 背景のグリッド線 */
-    #monitor-wrapper::after {
-        content: "";
-        position: absolute;
-        top: 0; left: 0; width: 100%; height: 100%;
-        background-image: 
-            linear-gradient(rgba(0,255,0,0.15) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(0,255,0,0.15) 1px, transparent 1px);
-        background-size: 25px 25px;
-        z-index: 1;
-        pointer-events: none;
-    }
-
+    /* キャンバスは背景を透明にして上に重ねる */
     canvas {
         position: absolute;
         top: 0;
         left: 0;
+        width: 100%;
+        height: 100%;
         z-index: 2;
     }
 
@@ -128,6 +127,7 @@
         font-weight: bold;
         padding: 18px;
         margin-top: auto;
+        width: 100%;
     }
 
     button.primary:hover {
@@ -184,8 +184,7 @@
     <div id="start-screen" class="screen active">
         <h1>心電図トレーニング</h1>
         <p style="text-align:center; color:#ccc; margin-bottom: 40px; line-height:1.6;">
-            動く波形を見て、正しい心電図の種類を選択してください。<br>
-            ※「すぐ引けるモニター心電図」に基づく出題です。
+            モニターに表示される波形を見て、<br>正しい心電図の種類を選択してください。
         </p>
         <button class="primary" onclick="startTraining()">訓練を開始する</button>
     </div>
@@ -194,9 +193,8 @@
         <div id="monitor-wrapper">
             <canvas id="ecg-canvas"></canvas>
         </div>
-        <div class="btn-grid" id="choices-container">
-            </div>
-        <button id="btn-next-result" class="primary" onclick="goToResult()" disabled>次へ進む</button>
+        <div class="btn-grid" id="choices-container"></div>
+        <button id="btn-next-result" class="primary" onclick="goToResult()" disabled>回答する</button>
     </div>
 
     <div id="result-screen" class="screen">
@@ -234,34 +232,39 @@ const ecgData = [
 let currentQuestion = null;
 let selectedAnswer = null;
 
-// キャンバスとアニメーションの設定
+// キャンバスと描画の設定
 const canvas = document.getElementById('ecg-canvas');
 const ctx = canvas.getContext('2d');
 let animationId;
+
+// モニターのスウィープ描画用変数
+let points = [];
+let currentX = 0;
 let ecgTime = 0;
-let ecgX = 0;
-let lastY = 0;
 let ecgState = {};
 
-// ★修正点: キャンバスサイズの取得を確実に行う
-function resizeCanvas() {
-    const wrapper = document.getElementById('monitor-wrapper');
-    canvas.width = wrapper.clientWidth || 600; // 取得できない場合のフォールバック
-    canvas.height = wrapper.clientHeight || 220;
-    lastY = canvas.height / 2;
-}
-window.addEventListener('resize', resizeCanvas);
+const SWEEP_SPEED = 2; // 1フレームに進むピクセル数
+const GAP_WIDTH = 25;  // 進行方向の先に作る「消去の隙間」の幅（ピクセル）
 
-// 心電図の初期化
+function setupCanvas() {
+    // 高解像度ディスプレイでも綺麗に描画するための設定
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+    
+    // 座標配列を初期化
+    points = new Array(canvas.width).fill(null);
+}
+window.addEventListener('resize', setupCanvas);
+
 function initECG(type) {
     ecgTime = 0;
-    ecgX = 0;
-    lastY = canvas.height / 2;
+    currentX = 0;
+    points.fill(null);
     ecgState = { type: type, nextBeat: 0.5, beatCount: 0 };
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
-// 波形の数学的生成ロジック
+// 波形の数学的アルゴリズム
 function getWaveValue(dt) {
     ecgTime += dt;
     let y = 0;
@@ -269,7 +272,6 @@ function getWaveValue(dt) {
     if (ecgState.type === 'vf') {
         return (Math.sin(ecgTime * 15) * 0.4 + Math.sin(ecgTime * 27) * 0.3 + Math.sin(ecgTime * 7) * 0.3) * (0.6 + 0.4 * Math.sin(ecgTime * 2));
     }
-    
     if (ecgState.type === 'vt') {
         return Math.sin(ecgTime * 15) * 0.7 + Math.sin(ecgTime * 5) * 0.3;
     }
@@ -277,7 +279,7 @@ function getWaveValue(dt) {
     let timeSinceBeat = ecgTime - ecgState.nextBeat;
     
     if (ecgState.type === 'af') {
-        y += Math.sin(ecgTime * 25) * 0.05 + Math.sin(ecgTime * 12) * 0.05;
+        y += Math.sin(ecgTime * 25) * 0.05 + Math.sin(ecgTime * 12) * 0.05; // 基線の揺れ(f波)
     }
     
     if (timeSinceBeat >= 0 && timeSinceBeat < 0.6) {
@@ -288,70 +290,90 @@ function getWaveValue(dt) {
             if (phase < 0.15) y += Math.sin(phase * Math.PI / 0.15) * 0.8;
             else if (phase < 0.4) y -= Math.sin((phase - 0.15) * Math.PI / 0.25) * 0.4;
         } else {
+            // P波
             if (ecgState.type !== 'af' && phase < 0.1) y += Math.sin(phase * Math.PI / 0.1) * 0.1;
+            // QRS波
             if (phase > 0.15 && phase < 0.17) y -= 0.1;
             if (phase >= 0.17 && phase < 0.2) y += 0.9;
             if (phase >= 0.2 && phase < 0.23) y -= 0.3;
+            // T波
             if (phase > 0.35 && phase < 0.5) y += Math.sin((phase - 0.35) * Math.PI / 0.15) * 0.15;
         }
     }
     
+    // 次の心拍のタイミングを計算
     if (timeSinceBeat > 0.6) {
         ecgState.beatCount++;
         if (ecgState.type === 'af') {
-            ecgState.nextBeat = ecgTime + 0.3 + Math.random() * 0.5;
+            ecgState.nextBeat = ecgTime + 0.3 + Math.random() * 0.5; // 不規則
         } else if (ecgState.type === 'pvc' && ecgState.beatCount % 4 === 3) {
-            ecgState.nextBeat = ecgTime + 0.4;
+            ecgState.nextBeat = ecgTime + 0.4; // 早期
         } else if (ecgState.type === 'pvc' && ecgState.beatCount % 4 === 0) {
-            ecgState.nextBeat = ecgTime + 1.2;
+            ecgState.nextBeat = ecgTime + 1.2; // 代償性休止期
         } else {
-            ecgState.nextBeat = ecgTime + 0.8;
+            ecgState.nextBeat = ecgTime + 0.8; // 正常
         }
     }
     return -y; 
 }
 
-// 描画ループ（リアルなスウィープ描画）
+// マス目とスウィープ描画を両立させるリアルタイムレンダリング
 function drawLoop() {
-    const speed = 2.5; 
-    
-    // 進行方向の少し先を黒く塗りつぶす（スウィープ効果）
-    ctx.clearRect(ecgX, 0, speed + 15, canvas.height); 
-    
-    ctx.beginPath();
-    ctx.moveTo(ecgX, lastY);
-    
-    let dt = 1/60;
+    let dt = 1 / 60;
     let val = getWaveValue(dt);
-    let nextY = canvas.height / 2 + val * (canvas.height * 0.4); 
     
-    ecgX += speed;
+    // Y座標の計算（画面の高さに合わせてスケール）
+    let y = (canvas.height / 2) + val * (canvas.height * 0.35);
     
-    // 右端に到達したかどうかの判定
-    if (ecgX <= canvas.width) {
-        ctx.lineTo(ecgX, nextY);
-        ctx.strokeStyle = '#00FF00'; // 鮮やかな緑
-        ctx.lineWidth = 2.5;
-        ctx.lineJoin = 'round';
-        ctx.stroke();
-    } else {
-        ecgX = 0; // 右端まで行ったら左端に戻る
+    // 進行方向のポイントを更新
+    for(let i = 0; i < SWEEP_SPEED; i++) {
+        let px = (currentX + i) % canvas.width;
+        points[px] = y;
     }
     
-    lastY = nextY;
+    currentX = (currentX + SWEEP_SPEED) % canvas.width;
+    
+    // キャンバスをクリア（透明になるため、後ろのCSSマス目が見える）
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.beginPath();
+    ctx.strokeStyle = '#00FF00'; // 波形の色（明るい緑）
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    
+    let isDrawing = false;
+    
+    // 横幅1ピクセルずつ線を引く
+    for (let x = 0; x < canvas.width; x++) {
+        // 現在の進行位置より少し先の「隙間(ギャップ)」は描画しない
+        let distToCurrent = (x - currentX + canvas.width) % canvas.width;
+        let inGap = distToCurrent > 0 && distToCurrent < GAP_WIDTH;
+        
+        if (inGap || points[x] === null) {
+            isDrawing = false;
+            continue;
+        }
+        
+        if (!isDrawing) {
+            ctx.moveTo(x, points[x]);
+            isDrawing = true;
+        } else {
+            ctx.lineTo(x, points[x]);
+        }
+    }
+    ctx.stroke();
+    
     animationId = requestAnimationFrame(drawLoop);
 }
 
-// 画面切り替え関数
 function showScreen(id) {
     document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
     document.getElementById(id).classList.add('active');
 }
 
-// ★修正点: 画面を表示してからキャンバスサイズを計算する
 function startTraining() {
-    showScreen('quiz-screen'); // 先に画面を表示！
-    resizeCanvas();            // 表示されてからサイズを取得！
+    showScreen('quiz-screen');
+    setupCanvas(); 
     nextQuestion();
 }
 
@@ -360,12 +382,11 @@ function nextQuestion() {
     document.getElementById('btn-next-result').disabled = true;
     
     showScreen('quiz-screen');
-    resizeCanvas(); // 念のためここでもリサイズ実行
     
     currentQuestion = ecgData[Math.floor(Math.random() * ecgData.length)];
     
-    initECG(currentQuestion.id);
     if (animationId) cancelAnimationFrame(animationId);
+    initECG(currentQuestion.id);
     drawLoop();
 
     const container = document.getElementById('choices-container');
@@ -388,7 +409,7 @@ function selectChoice(id, btnElement) {
 }
 
 function goToResult() {
-    cancelAnimationFrame(animationId); 
+    if (animationId) cancelAnimationFrame(animationId); 
     
     const isCorrect = (selectedAnswer === currentQuestion.id);
     const resultEl = document.getElementById('result-text');
